@@ -99,9 +99,11 @@ Verified working with Docker 29.8.0 / Compose v5.5.1: both images build cleanly,
 
 ## Wiring into Claude Desktop / Gemini CLI
 
-Not applied automatically by this build — add manually when you're ready to demo against a real client:
+Not applied automatically by this build — add manually when you're ready to demo against a real client.
 
-**Claude Desktop** (`claude_desktop_config.json`, `%APPDATA%\Claude\` on Windows):
+**Modern, MSIX-packaged Claude Desktop builds (e.g. 2.110.1) don't use a hand-edited `mcpServers` block at all** — they use the Desktop Extensions / MCPB mechanism instead (confirmed by inspecting the installed Blender/Figma extensions on a real machine; no `mcpServers` key exists anywhere in that build's config or logs). For that path, see **[`extension/SETUP.md`](extension/SETUP.md)** for building and installing the `.mcpb` package. The `mcpServers` JSON block below is for classic Claude Desktop builds and Gemini CLI, which still read it.
+
+**Claude Desktop (classic `mcpServers` config)** (`claude_desktop_config.json`, `%APPDATA%\Claude\` on Windows):
 ```json
 {
   "mcpServers": {
