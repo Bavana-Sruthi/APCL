@@ -13,7 +13,8 @@ Claude Desktop / Gemini CLI
         v
   Target MCP Server (demo/synthetic_mcp_server.py: read_thread, draft_reply, send_reply)
 ```
-
+##NOTE:
+follow setup.md for setting up this locally.
 ## What's real vs. simulated
 
 This is a hackathon prototype. Being explicit about the boundary matters more than pretending it doesn't exist:
