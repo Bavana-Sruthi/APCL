@@ -1,0 +1,33 @@
+[project]
+name = "covenant"
+version = "0.1.0"
+description = "Task-scoped, self-expiring, provable capabilities for MCP tool access."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp==2.2.0",
+    "cryptography>=43.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+covenant-proxy = "covenant.proxy:run"
+covenant-verify = "covenant.merkle:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: real-time tests that sleep on wall-clock TTLs",
+]
