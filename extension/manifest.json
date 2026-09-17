@@ -1,0 +1,27 @@
+{
+  "manifest_version": "0.4",
+  "name": "covenant",
+  "display_name": "Covenant",
+  "version": "0.1.0",
+  "description": "Task-scoped, self-expiring, provable capabilities for MCP tool access",
+  "long_description": "Covenant sits between an AI agent client and an MCP tool server. Every tools/call is checked against a signed, human-approved capability -- task-scoped, TTL-bound, quota-limited -- before it reaches the real tool. This extension wraps the demo synthetic mail server (read_thread, draft_reply, send_reply) so its enforcement, consent, and audit/Merkle logging can be exercised end to end from Claude Desktop.",
+  "author": { "name": "Bavana-Sruthi" },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/covenant/proxy.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run", "--project", "${__dirname}",
+        "covenant-proxy", "--ttl", "60",
+        "uv", "run", "--project", "${__dirname}", "python", "demo/synthetic_mcp_server.py"
+      ],
+      "env": {}
+    }
+  },
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": { "python": ">=3.12" }
+  }
+}
