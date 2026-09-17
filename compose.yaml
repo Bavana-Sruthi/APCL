@@ -1,0 +1,10 @@
+services:
+  # docker compose run --rm covenant-tests
+  covenant-tests:
+    build: .
+    command: ["pytest", "-q"]
+
+  # docker compose run --rm covenant-demo
+  covenant-demo:
+    build: .
+    command: ["bash", "scripts/demo.sh"]
