@@ -16,6 +16,7 @@ from typing import Callable, Protocol
 
 from covenant.capability import SignedCapability
 from covenant.config import load_trusted_public_key
+from covenant.policy import match_arguments
 
 
 class Decision(str, Enum):
@@ -59,7 +60,14 @@ class Broker:
         self._clock = clock
         self._key_resolver = key_resolver
 
-    def authorize(self, token: SignedCapability, *, tool_name: str, audience: str) -> BrokerResult:
+    def authorize(
+        self,
+        token: SignedCapability,
+        *,
+        tool_name: str,
+        audience: str,
+        arguments: dict | None = None,
+    ) -> BrokerResult:
         grant_id = token.capability.grant_id
 
         try:
@@ -81,6 +89,10 @@ class Broker:
 
         if tool_name not in token.capability.tools:
             return BrokerResult(Decision.DENY, "Capability does not permit this action.", grant_id)
+
+        args_ok, args_reason = match_arguments(tool_name, arguments or {}, token.capability.argument_constraints)
+        if not args_ok:
+            return BrokerResult(Decision.DENY, args_reason, grant_id)
 
         used = self._quota_store.get_used(grant_id)
         if used >= token.capability.quota:

@@ -1,0 +1,20 @@
+{
+  "subject": "demo-agent",
+  "audience": "mail-server",
+  "ttl_seconds": 300,
+  "quota": 5,
+  "grants": [
+    { "tool": "read_thread" },
+    { "tool": "draft_reply" },
+    {
+      "tool": "send_reply",
+      "arguments": [
+        {
+          "field": "body",
+          "operator": "equals",
+          "value": "Thanks, I'll review and get back to you by Friday."
+        }
+      ]
+    }
+  ]
+}

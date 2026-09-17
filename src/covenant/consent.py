@@ -26,6 +26,8 @@ import urllib.parse
 import webbrowser
 from typing import Callable, NamedTuple, Protocol
 
+from covenant.policy import ArgumentRule
+
 
 class ConsentRequest(NamedTuple):
     subject: str
@@ -33,6 +35,10 @@ class ConsentRequest(NamedTuple):
     requested_tools: list[str]
     ttl_seconds: int
     quota: int
+    # tool_name -> rules narrowing that tool's arguments, shown to the human
+    # approving the grant (see _describe_rules) but never editable here --
+    # they come from the TaskPolicy file the human already authored/reviewed.
+    argument_constraints: dict[str, list[ArgumentRule]] = {}
 
 
 class ConsentDecision(NamedTuple):
@@ -60,6 +66,14 @@ DEFAULT_WEB_CONSENT_TIMEOUT_SECONDS = 300
 
 def _describe(tool: str) -> str:
     return _TOOL_DESCRIPTIONS.get(tool, tool)
+
+
+def _describe_rules(tool: str, argument_constraints: dict[str, list[ArgumentRule]]) -> str | None:
+    """Plain-English summary of a tool's argument rules, or None if unrestricted."""
+    rules = argument_constraints.get(tool, [])
+    if not rules:
+        return None
+    return "; ".join(f"{r.field} {r.operator} {r.value!r}" for r in rules)
 
 
 def default_demo_decision(req: ConsentRequest) -> ConsentDecision:
@@ -140,6 +154,9 @@ class TerminalConsentProvider:
         out(f"Agent '{req.subject}' wants permission to, on '{req.audience}':")
         for tool in req.requested_tools:
             out(f"  - {_describe(tool)}")
+            rules = _describe_rules(tool, req.argument_constraints)
+            if rules:
+                out(f"      restricted to: {rules}")
         out(f"Duration: {req.ttl_seconds // 60} minutes")
         out(f"Quota: {req.quota} calls")
         out()
@@ -148,7 +165,11 @@ class TerminalConsentProvider:
         for tool in req.requested_tools:
             default = _DEFAULT_APPROVE.get(tool, True)
             hint = "Y/n" if default else "y/N"
-            answer = ask(f"Allow '{_describe(tool)}'? [{hint}] ").lower()
+            rules = _describe_rules(tool, req.argument_constraints)
+            prompt = f"Allow '{_describe(tool)}'"
+            if rules:
+                prompt += f" (restricted to: {rules})"
+            answer = ask(f"{prompt}? [{hint}] ").lower()
             approve = default if answer == "" else answer in ("y", "yes")
             if approve:
                 granted.append(tool)
@@ -190,10 +211,16 @@ def _render_form(req: ConsentRequest, token: str) -> str:
     rows = []
     for tool in req.requested_tools:
         checked = "checked" if _DEFAULT_APPROVE.get(tool, True) else ""
+        rules = _describe_rules(tool, req.argument_constraints)
+        rules_html = (
+            f'<small style="display:block;margin-left:24px;color:#555;">restricted to: {rules}</small>'
+            if rules
+            else ""
+        )
         rows.append(
             f'<label style="display:block;margin:6px 0;">'
             f'<input type="checkbox" name="tools" value="{tool}" {checked}> {_describe(tool)}'
-            f"</label>"
+            f"</label>{rules_html}"
         )
     checkboxes = "\n".join(rows)
     return f"""<!doctype html>

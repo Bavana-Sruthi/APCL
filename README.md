@@ -141,4 +141,3 @@ Consent output (the browser-ready URL, timeout/denial notices) always goes to `s
 2. The capability's short TTL expires for real; replaying `send_reply` is denied because it's dead.
 3. Three attacker scenarios (expired-token replay, audience swap, scope widening via unsigned edit) — all denied by the same `Broker.authorize()` the live proxy calls.
 4. A Merkle inclusion receipt for the first grant is pinned, verified, then shown to fail once the underlying log is tampered with.
-hey, wkats happeninng
