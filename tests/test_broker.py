@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from covenant.broker import Broker, Decision, InMemoryQuotaStore
 from covenant.capability import Capability, sign_capability
+from covenant.policy import ArgumentRule
 
 
 @pytest.fixture
@@ -77,3 +78,70 @@ def test_denied_calls_do_not_consume_quota(key):
     assert denied.decision == Decision.DENY
     allowed = broker.authorize(token, tool_name="read_thread", audience="mail-server")
     assert allowed.decision == Decision.ALLOW
+
+
+# --- argument-level scoping ---------------------------------------------------
+
+
+def test_argument_constrained_tool_allows_matching_arguments(key):
+    broker = _broker(key)
+    token = _token(
+        key,
+        tools=("read_thread", "send_reply"),
+        argument_constraints={"send_reply": (ArgumentRule(field="to", operator="in", value=["a@x.com"]),)},
+    )
+    result = broker.authorize(
+        token, tool_name="send_reply", audience="mail-server", arguments={"to": "a@x.com"}
+    )
+    assert result.decision == Decision.ALLOW
+
+
+def test_argument_constrained_tool_denies_non_matching_arguments(key):
+    broker = _broker(key)
+    token = _token(
+        key,
+        tools=("read_thread", "send_reply"),
+        argument_constraints={"send_reply": (ArgumentRule(field="to", operator="in", value=["a@x.com"]),)},
+    )
+    result = broker.authorize(
+        token, tool_name="send_reply", audience="mail-server", arguments={"to": "evil@x.com"}
+    )
+    assert result.decision == Decision.DENY
+    assert result.reason.startswith("Capability does not permit these arguments: to")
+
+
+def test_argument_constrained_denial_does_not_consume_quota(key):
+    broker = _broker(key)
+    token = _token(
+        key,
+        tools=("read_thread", "send_reply"),
+        quota=1,
+        argument_constraints={"send_reply": (ArgumentRule(field="to", operator="in", value=["a@x.com"]),)},
+    )
+    denied = broker.authorize(
+        token, tool_name="send_reply", audience="mail-server", arguments={"to": "evil@x.com"}
+    )
+    assert denied.decision == Decision.DENY
+    allowed = broker.authorize(token, tool_name="read_thread", audience="mail-server")
+    assert allowed.decision == Decision.ALLOW
+
+
+def test_tool_without_argument_constraints_is_unaffected_by_call_arguments(key):
+    """Backward compatibility: a tool absent from argument_constraints keeps
+    working exactly as it did before this field existed, regardless of what
+    arguments it's called with."""
+    broker = _broker(key)
+    token = _token(key, tools=("read_thread",))
+    result = broker.authorize(
+        token, tool_name="read_thread", audience="mail-server", arguments={"anything": "goes"}
+    )
+    assert result.decision == Decision.ALLOW
+
+
+def test_authorize_without_arguments_kwarg_still_works(key):
+    """The `arguments` kwarg is optional -- existing callers that never pass
+    it (e.g. tools with no argument constraints) are unaffected."""
+    broker = _broker(key)
+    token = _token(key, tools=("read_thread",))
+    result = broker.authorize(token, tool_name="read_thread", audience="mail-server")
+    assert result.decision == Decision.ALLOW

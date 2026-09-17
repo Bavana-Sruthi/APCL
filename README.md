@@ -2,14 +2,14 @@
 
 > Every agent grant today is permanent, coarse, and unaudited. Covenant makes agent permissions task-scoped, self-expiring, and provable to a third party.
 
-Covenant is an MCP proxy that sits between an agent client (Claude Desktop, Gemini CLI) and an MCP tool server. Every `tools/call` is checked against a signed, human-approved **capability** — task-scoped, TTL-bound, quota-limited — before it reaches the real tool. Denials come with a human-readable reason. Every grant, use, and denial is recorded in an append-only, hash-chained, Merkle-provable audit log.
+Covenant is an MCP proxy that sits between an agent client (Claude Desktop, Gemini CLI) and an MCP tool server. Every `tools/call` is checked against a signed, human-approved **capability** — task-scoped, TTL-bound, quota-limited, and (optionally) restricted down to specific argument values, not just tool names — before it reaches the real tool. Denials come with a human-readable reason. Every grant, use, and denial is recorded in an append-only, hash-chained, Merkle-provable audit log.
 
 ```
 Claude Desktop / Gemini CLI
         | MCP over stdio
         v
   Covenant Proxy  ──────► Broker.authorize() ──────► Audit log (hash-chained + Merkle)
-        | MCP over stdio        (sig, TTL, audience, scope, quota)
+        | MCP over stdio        (sig, TTL, audience, scope, arguments, quota)
         v
   Target MCP Server (demo/synthetic_mcp_server.py: read_thread, draft_reply, send_reply)
 ```
@@ -21,7 +21,8 @@ This is a hackathon prototype. Being explicit about the boundary matters more th
 **Real, and independently testable (`pytest`):**
 - Ed25519 signing and signature verification of capability tokens (`src/covenant/capability.py`)
 - TTL, audience, scope, and quota enforcement (`src/covenant/broker.py`) — wall-clock real, not simulated (see the `@pytest.mark.slow` real-sleep test in `tests/test_expiry.py`)
-- Attenuation that can only narrow a parent grant, never widen it
+- Argument-level scoping (`src/covenant/policy.py`) — a capability can restrict a granted tool down to specific argument values (e.g. "send_reply is allowed, but only this exact reply body" or "only to these recipients"), declared in a human-editable `TaskPolicy` file and enforced by `Broker.authorize()` as the final check, signed as part of the capability like everything else
+- Attenuation that can only narrow a parent grant, never widen it — including argument rules: a delegated capability can add stricter rules but can never drop one the parent already had
 - A hash-chained append-only audit log, and a Merkle tree over it with signed tree heads and inclusion proofs
 - The MCP proxy itself: it launches the target server as a real subprocess and relays real JSON-RPC traffic over stdio, intercepting only `tools/call`
 
@@ -40,8 +41,9 @@ Covenant is a product layer on published primitives, not a new protocol: RFC 939
 ```
 src/covenant/
   capability.py   Capability token model: sign, verify, attenuate (narrow-only)
+  policy.py       ArgumentRule matching + TaskPolicy file loading/validation (argument-level scoping)
   issuer.py       Mints signed capabilities, logs grant_issued
-  broker.py       Broker.authorize(): signature -> TTL -> audience -> scope -> quota
+  broker.py       Broker.authorize(): signature -> TTL -> audience -> scope -> arguments -> quota
   audit.py        Hash-chained append-only audit log (JSONL)
   merkle.py       Merkle tree, signed tree heads, inclusion proofs, receipt CLI
   consent.py      ConsentProvider protocol: TerminalConsentProvider + ScriptedConsentProvider
@@ -50,8 +52,11 @@ src/covenant/
 demo/
   synthetic_mcp_server.py   Fake mail tools: read_thread, draft_reply, send_reply
   scripted_client.py        Drives the live proxy for the read/draft/send-denied/expiry-replay demo
+  policy_client.py          Drives a --policy-scoped proxy run: same tool granted, wrong argument denied
   attacker_mode.py          Three attacks run against the real Broker/Issuer
-tests/            One file per security property (capability, broker, expiry, audience, scope, audit, merkle)
+examples/
+  read-only-email.json      Sample TaskPolicy: read+draft unrestricted, send_reply locked to one reply body
+tests/            One file per security property (capability, broker, expiry, audience, scope, policy, audit, merkle)
 scripts/demo.sh   The full ~90-second demo, unattended
 ```
 
@@ -62,7 +67,7 @@ python3.12 -m venv .venv
 .venv/Scripts/python.exe -m pip install -e ".[dev]"   # Windows
 # .venv/bin/python -m pip install -e ".[dev]"          # macOS/Linux
 
-.venv/Scripts/python.exe -m pytest -q                  # 31 tests, fast subset skips one real-sleep test
+.venv/Scripts/python.exe -m pytest -q                  # 78 tests, fast subset skips one real-sleep test
 .venv/Scripts/python.exe -m pytest -q -m slow           # includes the real-TTL end-to-end test
 
 bash scripts/demo.sh                                    # the full unattended demo
@@ -72,7 +77,7 @@ Or reproduce the same thing in Docker, no local Python needed:
 
 ```bash
 docker compose build                     # build both images
-docker compose run --rm covenant-tests   # pytest -q -> 31 passed
+docker compose run --rm covenant-tests   # pytest -q -> 78 passed
 docker compose run --rm covenant-demo    # scripts/demo.sh, the full unattended demo
 docker compose down                      # no volumes are declared, so there's nothing to preserve between runs
 ```
@@ -87,7 +92,41 @@ Verified working with Docker 29.8.0 / Compose v5.5.1: both images build cleanly,
 
 # or, unattended (applies the same read+draft/no-send policy a human would approve by pressing Enter):
 .venv/Scripts/python.exe -m covenant.proxy --auto --ttl 60 python demo/synthetic_mcp_server.py
+
+# or, scoped by a declarative task policy (see "Task policies" below):
+.venv/Scripts/python.exe -m covenant.proxy --auto --policy examples/read-only-email.json python demo/synthetic_mcp_server.py
 ```
+
+### Task policies: scoping by argument, not just tool name
+
+A capability's `tools` list answers "which tools may this agent call at all" — it can't answer "send_reply to whom, about what?" `--policy PATH` loads a declarative **`TaskPolicy`** file (`src/covenant/policy.py`) that scopes both: which tools are even offered for consent, and, per tool, which argument values are allowed. It's the human-editable, *unsigned* input a capability is minted from — never trusted directly by the broker, only after a human approves it via consent (or `--auto`, which honors the policy's own requested tools instead of falling back to the unrelated hardcoded demo default when a policy is given).
+
+`examples/read-only-email.json`:
+```json
+{
+  "subject": "demo-agent",
+  "audience": "mail-server",
+  "ttl_seconds": 300,
+  "quota": 5,
+  "grants": [
+    { "tool": "read_thread" },
+    { "tool": "draft_reply" },
+    {
+      "tool": "send_reply",
+      "arguments": [
+        { "field": "body", "operator": "equals", "value": "Thanks, I'll review and get back to you by Friday." }
+      ]
+    }
+  ]
+}
+```
+`read_thread` and `draft_reply` are unrestricted (any arguments); `send_reply` is a granted tool, but only for that one exact reply body — calling it with anything else is denied with `"Capability does not permit these arguments: body (expected equals ..., got ...)"`, even though `send_reply` itself is in scope. Argument rules support `equals`, `in`, `not_in`, and `regex` operators against a (possibly dotted, e.g. `filters.folder`) field path into the call's arguments; see `src/covenant/policy.py` for the full matcher.
+
+The policy's `audience` becomes the proxy's audience (so the same CLI targets any MCP server, not just the `"mail-server"` demo default used when `--policy` is omitted), and startup **fails closed**: if the policy names a tool the live target server doesn't actually offer, the proxy refuses to start rather than silently under-enforcing. `demo/policy_client.py` drives this end to end against the real demo server:
+```bash
+.venv/Scripts/python.exe demo/policy_client.py
+```
+Like `argument_constraints` on `Capability` itself, this is signed as part of the minted capability (`canonical_bytes()` covers it), so an attacker who edits a token's rules also breaks its signature — same guarantee as tampering with `tools`. `attenuate()` extends the narrow-only rule to arguments too: a delegated capability can add stricter argument rules, but can never drop one the parent already had.
 
 ### Verifying a Merkle inclusion proof independently
 
@@ -141,3 +180,5 @@ Consent output (the browser-ready URL, timeout/denial notices) always goes to `s
 2. The capability's short TTL expires for real; replaying `send_reply` is denied because it's dead.
 3. Three attacker scenarios (expired-token replay, audience swap, scope widening via unsigned edit) — all denied by the same `Broker.authorize()` the live proxy calls.
 4. A Merkle inclusion receipt for the first grant is pinned, verified, then shown to fail once the underlying log is tampered with.
+
+`demo/policy_client.py` runs the argument-scoping counterpart that `scripts/demo.sh` doesn't cover: a `--policy`-scoped proxy run where `send_reply` is a granted tool, `read_thread`/`draft_reply` succeed as usual, but `send_reply` is denied for an unapproved reply body and allowed only for the one body the policy pre-approved — the scenario tool-name-only scoping can't express.

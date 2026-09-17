@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from covenant.audit import AuditLog
 from covenant.capability import Capability, SignedCapability, sign_capability
 from covenant.config import ISSUER_KEY_ID, load_or_create_issuer_key
+from covenant.policy import ArgumentRule
 
 
 class Issuer:
@@ -32,6 +33,7 @@ class Issuer:
         tools: Sequence[str],
         ttl_seconds: int,
         quota: int,
+        argument_constraints: dict[str, Sequence[ArgumentRule]] | None = None,
     ) -> SignedCapability:
         now = datetime.now(timezone.utc)
         capability = Capability(
@@ -42,6 +44,9 @@ class Issuer:
             issued_at=now,
             expires_at=now + timedelta(seconds=ttl_seconds),
             quota=quota,
+            argument_constraints={
+                tool: tuple(rules) for tool, rules in (argument_constraints or {}).items()
+            },
         )
         signed = sign_capability(capability, self._private_key, self._key_id)
         self._audit_log.append(

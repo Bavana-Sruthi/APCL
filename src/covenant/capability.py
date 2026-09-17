@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+from covenant.policy import ArgumentRule
+
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
@@ -39,6 +41,10 @@ class Capability:
     quota: int
     parent_grant_id: str | None = None
     nonce: str = field(default_factory=lambda: secrets.token_hex(8))
+    # tool_name -> rules narrowing which arguments that tool may be called
+    # with. A tool absent here (or mapped to an empty tuple) is constrained
+    # only by `tools` above, exactly like before this field existed.
+    argument_constraints: dict[str, tuple[ArgumentRule, ...]] = field(default_factory=dict)
 
     def canonical_bytes(self) -> bytes:
         """Deterministic byte encoding used for both signing and hashing."""
@@ -52,6 +58,10 @@ class Capability:
             "quota": self.quota,
             "parent_grant_id": self.parent_grant_id,
             "nonce": self.nonce,
+            "argument_constraints": {
+                tool: [rule.to_dict() for rule in rules]
+                for tool, rules in sorted(self.argument_constraints.items())
+            },
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -70,6 +80,10 @@ class Capability:
             quota=d["quota"],
             parent_grant_id=d.get("parent_grant_id"),
             nonce=d["nonce"],
+            argument_constraints={
+                tool: tuple(ArgumentRule.from_dict(r) for r in rules)
+                for tool, rules in d.get("argument_constraints", {}).items()
+            },
         )
 
 
@@ -121,12 +135,18 @@ def attenuate(
     issued_at: datetime,
     private_key: Ed25519PrivateKey,
     key_id: str,
+    argument_constraints: dict[str, tuple[ArgumentRule, ...]] | None = None,
 ) -> SignedCapability:
     """Mints a narrower capability derived from `parent`.
 
     A delegated/attenuated capability can only ever shrink what the parent
     granted -- never widen it. Any attempt to exceed the parent's tools, TTL,
     or quota raises ValueError before a signature is ever produced.
+
+    `argument_constraints`, if given, must include every rule the parent had
+    for each retained tool (it may add more, narrowing further, but never
+    drop one -- that would widen scope). If omitted, the child simply
+    inherits the parent's constraints unchanged for whichever tools remain.
     """
     parent_tools = set(parent.capability.tools)
     if not tools.issubset(parent_tools):
@@ -135,6 +155,21 @@ def attenuate(
         raise ValueError("Cannot extend expiry beyond parent grant.")
     if quota > parent.capability.quota:
         raise ValueError("Cannot widen quota beyond parent grant.")
+
+    parent_constraints = parent.capability.argument_constraints
+    if argument_constraints is None:
+        child_constraints = {tool: rules for tool, rules in parent_constraints.items() if tool in tools}
+    else:
+        for tool, parent_rules in parent_constraints.items():
+            if tool not in tools:
+                continue
+            child_rules = argument_constraints.get(tool, ())
+            dropped = [r for r in parent_rules if r not in child_rules]
+            if dropped:
+                raise ValueError(
+                    f"Cannot drop argument constraint(s) from parent grant for tool {tool!r}: {dropped}"
+                )
+        child_constraints = argument_constraints
 
     child = Capability(
         grant_id=grant_id,
@@ -145,5 +180,6 @@ def attenuate(
         expires_at=expires_at,
         quota=quota,
         parent_grant_id=parent.capability.grant_id,
+        argument_constraints=child_constraints,
     )
     return sign_capability(child, private_key, key_id)

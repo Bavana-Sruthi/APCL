@@ -35,7 +35,7 @@ class AuditEntry:
     grant_id: str | None
     subject: str | None
     tool_name: str | None
-    decision: str | None  # "allow" | "deny" | None (grant_issued has no decision)
+    decision: str | None  # "allow" | "deny" | None (grant_issued has no decision)  
     reason: str | None
     prev_hash: str
 
