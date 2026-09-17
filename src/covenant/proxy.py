@@ -31,13 +31,7 @@ from covenant import config
 from covenant.audit import AuditLog
 from covenant.broker import Broker, Decision
 from covenant.capability import SignedCapability
-from covenant.consent import (
-    ConsentProvider,
-    ConsentRequest,
-    ScriptedConsentProvider,
-    TerminalConsentProvider,
-    default_demo_decision,
-)
+from covenant.consent import ConsentProvider, ConsentRequest, select_consent_provider
 from covenant.issuer import Issuer
 from covenant.merkle import MerkleAuditLog
 
@@ -59,7 +53,7 @@ class CovenantProxy:
         self._subject = subject
         self._ttl_seconds = ttl_seconds
         self._quota = quota
-        self._consent_provider = consent_provider or TerminalConsentProvider()
+        self._consent_provider = consent_provider or select_consent_provider(auto=False)
 
         self._audit_log = AuditLog(config.AUDIT_LOG_PATH)
         private_key = config.load_or_create_issuer_key()
@@ -176,7 +170,7 @@ def run() -> None:
         raise SystemExit(2)
 
     target_command, *target_args = args
-    consent_provider = ScriptedConsentProvider(default_demo_decision) if auto else TerminalConsentProvider()
+    consent_provider = select_consent_provider(auto=auto)
     proxy = CovenantProxy(
         target_command,
         target_args,

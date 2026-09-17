@@ -71,10 +71,12 @@ bash scripts/demo.sh                                    # the full unattended de
 Or reproduce the same thing in Docker, no local Python needed:
 
 ```bash
-docker compose run --rm covenant-tests   # pytest -q
-docker compose run --rm covenant-demo    # scripts/demo.sh
+docker compose build                     # build both images
+docker compose run --rm covenant-tests   # pytest -q -> 31 passed
+docker compose run --rm covenant-demo    # scripts/demo.sh, the full unattended demo
+docker compose down                      # no volumes are declared, so there's nothing to preserve between runs
 ```
-(Docker was not available in the environment this was built in, so the compose setup is structurally verified against the Dockerfile but not execution-tested here — flagging that honestly rather than claiming otherwise.)
+Verified working with Docker 29.8.0 / Compose v5.5.1: both images build cleanly, `docker compose up` runs both services to completion (`covenant-tests-1` and `covenant-demo-1` both exit 0), and `docker compose down` tears down cleanly. Container writes to `.covenant-data` stay inside the container's own filesystem — no volume is declared, so nothing persists between separate `run`/`up` invocations, and the host working tree is never touched.
 
 ### Manually driving the proxy
 
@@ -105,15 +107,22 @@ Not applied automatically by this build — add manually when you're ready to de
   "mcpServers": {
     "covenant": {
       "command": "C:\\Users\\bavanasruthi\\APCL\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "covenant.proxy", "python", "C:\\Users\\bavanasruthi\\APCL\\demo\\synthetic_mcp_server.py"]
+      "args": [
+        "-m", "covenant.proxy",
+        "C:\\Users\\bavanasruthi\\APCL\\.venv\\Scripts\\python.exe",
+        "C:\\Users\\bavanasruthi\\APCL\\demo\\synthetic_mcp_server.py"
+      ]
     }
   }
 }
 ```
+**Both the `command` and the downstream target argument must be the venv's absolute `python.exe` path, not bare `"python"`.** Confirmed by testing: `stdio_client` inherits `PATH` from the launching process (Claude Desktop's own environment, not an activated venv), so a bare `"python"` for the downstream target resolves to whatever Python is first on Claude Desktop's `PATH` -- typically not this project's venv -- and the target subprocess fails with `ModuleNotFoundError: No module named 'mcp'` before Covenant ever gets a chance to relay anything.
 
 **Gemini CLI** (`~/.gemini/settings.json`): same shape under `mcpServers`.
 
 **Known limitation:** `TerminalConsentProvider` talks to the real console device (`CONIN$`/`CONOUT$` on Windows, `/dev/tty` elsewhere) rather than the proxy's own stdin/stdout, because those ARE the MCP JSON-RPC pipe once a client launches the proxy — reading/writing them for a human prompt would corrupt the protocol stream. This works when a console is attached to the launching process, but Claude Desktop is a GUI app that may launch the proxy without one. If consent silently fails to show a prompt in that setup, use `--auto` (unattended, same default policy) for the demo, or run the proxy from a terminal yourself as the reliable path. A proper fix — a real `elicitation/create` round-trip, or the local web-page consent surface described in the original plan — is a named follow-up, not implemented here.
+
+**Verification status:** the exact command/args above were driven end to end with a real MCP client (the raw SDK, not `demo/scripted_client.py`) against the live proxy: `initialize()` succeeded, `list_tools()` returned the real downstream tool list, `read_thread`/`draft_reply` were ALLOWED and `send_reply` was DENIED with the broker's actual reason, and stdout carried valid JSON-RPC throughout (verified by the fact that the client's own JSON-RPC parser never choked). Claude Desktop itself was not installed in the environment this was verified in, so the real Claude Desktop application has not been exercised — only the exact command it would run has been. `--auto` consent was used for that automated check since no human or GUI could supply live console input; the real Claude Desktop path still goes through `TerminalConsentProvider` as configured above.
 
 ## Demo script
 
